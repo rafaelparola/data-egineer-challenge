@@ -27,6 +27,14 @@ with pd.read_csv('trips.csv', header=0, chunksize=chunksize) as chunk:
         df['datetime'] = pd.to_datetime(df['datetime'])
         df['datetime'] = df['datetime'].dt.round('D')
 
+        # Get the weekly average per region and stores in a DB_table
+        df_weekly_avg = df.groupby('region').apply(lambda x: x.resample('7D', on='datetime').count().div(7))
+        df_weekly_avg.drop(['origin_coord', 'destination_coord', 'datasource'], axis=1, inplace=True)
+        df_weekly_avg.rename(columns={'region': 'weekly_avg'}, inplace=True)
+        df_weekly_avg.reset_index(inplace=True)
+
+        df_weekly_avg.to_sql('WEEK_AVERGAGE_BY_REGION', dbEngine, if_exists='append')
+
         # Remove the all the characteres not related to the lat and lon for the origin and destine('POINT ()').
         df['origin_coord']=df['origin_coord'].apply(lambda st: st[st.find("(")+1:st.find(")")])
         df['destination_coord']=df['destination_coord'].apply(lambda st: st[st.find("(")+1:st.find(")")])
