@@ -3,6 +3,7 @@ import sqlalchemy
 import os
 import logging
 from datetime import datetime
+from geopy.distance import geodesic as GD
 
 # Initializes the log information
 etl_start_datetime = datetime.now()
@@ -24,7 +25,7 @@ with pd.read_csv('trips.csv', header=0, chunksize=chunksize) as chunk:
 
         # Changes the datetime field to datetime type and round the hours.
         df['datetime'] = pd.to_datetime(df['datetime'])
-        df['datetime'] = df['datetime'].dt.round('H')
+        df['datetime'] = df['datetime'].dt.round('D')
 
         # Remove the all the characteres not related to the lat and lon for the origin and destine('POINT ()').
         df['origin_coord']=df['origin_coord'].apply(lambda st: st[st.find("(")+1:st.find(")")])
@@ -44,11 +45,36 @@ with pd.read_csv('trips.csv', header=0, chunksize=chunksize) as chunk:
         df['dst_coord_lon'] = df['dst_coord_lon'].astype(float)
         df['dst_coord_lat'] = df['dst_coord_lat'].astype(float)
 
-        # Round all coordinates columns to 2 decimals.
-        df['origin_coord_lon'] = df['origin_coord_lon'].round(2)
-        df['origin_coord_lat'] = df['origin_coord_lat'].round(2)
-        df['dst_coord_lon'] = df['dst_coord_lon'].round(2)
-        df['dst_coord_lat'] = df['dst_coord_lat'].round(2)
+
+        # Group similar origin, destionation and datetime
+        df['count_grouped'] = 0
+
+        # Returns the distance in Kilometers from point 1 to point 2
+        def check_distancies(lat, lon, lat2, lon2):
+            point1 = (lat, lon)
+            point2 = (lat2, lon2)
+            return GD(point1, point2).km
+
+        # Iterates the DataFrame to find near 10Km Origin Coordinates, near 10Km Destine Coordinates 
+        # and equal dates based on the previous datetime transformation
+        for i, r in df.iterrows():
+            for i2, r2, in df.iterrows():
+                ori_lat = r['origin_coord_lat']
+                ori_lon = r['origin_coord_lon']
+                ori_lat2 = r2['origin_coord_lat']
+                ori_lon2 = r2['origin_coord_lon']
+
+                dst_lat = r['dst_coord_lat']
+                dst_lon = r['dst_coord_lon']
+                dst_lat2 = r2['dst_coord_lat']
+                dst_lon2 = r2['dst_coord_lon']
+                if i != i2 and (check_distancies(ori_lat ,ori_lon, ori_lat2, ori_lon2) < 10) and i < i2:
+                    if check_distancies(dst_lat, dst_lon, dst_lat2, dst_lon2) < 10:
+                        if r['datetime'] == r2['datetime']:
+                            df.drop(i2, inplace=True)
+                            df.loc[i, 'count_grouped'] = df.loc[i, 'count_grouped'] + 1
+
+
 
         # Creates four other dataframes for region, coordinates, dates and datasources in order to model a snoflake schema.
         df_region = df[['region']].drop_duplicates()
