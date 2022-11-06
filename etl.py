@@ -5,8 +5,10 @@ import logging
 from datetime import datetime
 from geopy.distance import geodesic as GD
 
-# Initializes the log information
+# Get the execution datetime for log and for not duplicating rows in case of executing the ETL more then once
 etl_start_datetime = datetime.now()
+
+# Initializes the log information
 logging.basicConfig(filename="log.txt", level=logging.DEBUG)
 logging.info('Initializing execution at: '+ str(etl_start_datetime))
 
@@ -33,6 +35,7 @@ with pd.read_csv('trips.csv', header=0, chunksize=chunksize) as chunk:
         df_weekly_avg.rename(columns={'region': 'weekly_avg'}, inplace=True)
         df_weekly_avg.reset_index(inplace=True)
 
+        df_weekly_avg['execution_datetime'] = etl_start_datetime
         df_weekly_avg.to_sql('WEEK_AVERGAGE_BY_REGION', dbEngine, if_exists='append')
 
         # Remove the all the characteres not related to the lat and lon for the origin and destine('POINT ()').
@@ -110,24 +113,41 @@ with pd.read_csv('trips.csv', header=0, chunksize=chunksize) as chunk:
         df = df.drop(['region'], axis=1)
 
         # Persists all dimension tables into the database.
+        df_region['execution_datetime'] = etl_start_datetime
         df_region.to_sql('D_REGION', dbEngine, if_exists='append', index=False)
         logging.info('D_REGION table loaded.')
+
+        df_coord['execution_datetime'] = etl_start_datetime
         df_coord.to_sql('D_COORD', dbEngine, if_exists='append', index=False)
         logging.info('D_COORD table loaded.')
+
+        df_dates['execution_datetime'] = etl_start_datetime
         df_dates.to_sql('D_DATES', dbEngine, if_exists='append', index=False)
         logging.info('D_DATES table loaded.')
+
+        df_datasources['execution_datetime'] = etl_start_datetime
         df_datasources.to_sql('D_DATASOURCE', dbEngine, if_exists='append', index=False)
         logging.info('D_DATASOURCE table loaded.')
 
         # Gets all data from the db dimension tables
         df_region = pd.read_sql_table('D_REGION', dbEngine)
-        df_coord = pd.read_sql_table('D_COORD', dbEngine)
-        df_dates = pd.read_sql_table('D_DATES', dbEngine)
-        df_datasources = pd.read_sql_table('D_DATASOURCE', dbEngine)
+        df_region = df_region.loc[df_region['execution_datetime'] == str(etl_start_datetime)]
 
+        df_coord = pd.read_sql_table('D_COORD', dbEngine)
+        df_coord = df_coord.loc[df_coord['execution_datetime'] == str(etl_start_datetime)]
+
+        df_dates = pd.read_sql_table('D_DATES', dbEngine)
+        df_dates = df_dates.loc[df_dates['execution_datetime'] == str(etl_start_datetime)]
         df_dates['datetime'] = pd.to_datetime(df_dates['datetime'])
 
+        df_datasources = pd.read_sql_table('D_DATASOURCE', dbEngine)
+        df_datasources = df_datasources.loc[df_datasources['execution_datetime'] == str(etl_start_datetime)]
+
+        
+
         logging.info('Working at the fact table transformations...')
+
+        
 
         # Merge the trips fact table with the coordinates dimension table.
         df = df.merge(df_coord.reset_index(), how='inner', left_on=['origin_coord_lat', 'origin_coord_lon', 'dst_coord_lat', 'dst_coord_lon'], right_on=['origin_coord_lat', 'origin_coord_lon', 'dst_coord_lat', 'dst_coord_lon'])
@@ -147,12 +167,16 @@ with pd.read_csv('trips.csv', header=0, chunksize=chunksize) as chunk:
         df = df.merge(df_datasources.reset_index(), how='inner', left_on='datasource', right_on='datasource')
         # Set the dimension id column to the wanted name in the fact table.
         df = df.rename(columns={'id': 'd_datasource_id'})
+        
+        
         # Remove unwanted columns in the fact table.
         df = df.drop(['datasource'], axis=1)
-
-        df = df.drop(['index', 'index_x', 'index_y'], axis=1)
+        df = df.drop(['index', 'index_x', 'index_y', 'execution_datetime_x', 'execution_datetime_y'], axis=1)
 
         # Persists the fact table into the database.
+
+
+        df['execution_datetime'] = etl_start_datetime
         df.to_sql('F_TRIPS', dbEngine, if_exists='append', index=False)
 
         logging.info('F_TRIPS fact table loaded.')
