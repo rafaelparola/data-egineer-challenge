@@ -4,6 +4,7 @@ import os
 import logging
 from datetime import datetime
 from geopy.distance import geodesic as GD
+from sqlalchemy.engine.url import URL
 
 # Get the execution datetime for log and for not duplicating rows in case of executing the ETL more then once
 etl_start_datetime = datetime.now()
@@ -12,9 +13,8 @@ etl_start_datetime = datetime.now()
 logging.basicConfig(filename="log.txt", level=logging.DEBUG)
 logging.info('Initializing execution at: '+ str(etl_start_datetime))
 
-
 # Prepare the db engine to be read by Pandas
-dbEngine=sqlalchemy.create_engine('sqlite:///trips_dw.db') # May differ if you are not using windows.
+dbEngine=sqlalchemy.create_engine('sqlite:///trips_dw.db') 
 logging.info('Connected to DB.')
 
 # Populates the CSV file into a Pandas DataFrame using chunks, to scale at large volumes of data without going out of memory.
@@ -29,14 +29,13 @@ with pd.read_csv('trips.csv', header=0, chunksize=chunksize) as chunk:
         df['datetime'] = pd.to_datetime(df['datetime'])
         df['datetime'] = df['datetime'].dt.round('D')
 
-        # Get the weekly average per region and stores in a DB_table
+        # Get the weekly average per region and stores in a DB_table separatly from the snowflake model.
         df_weekly_avg = df.groupby('region').apply(lambda x: x.resample('7D', on='datetime').count().div(7))
         df_weekly_avg.drop(['origin_coord', 'destination_coord', 'datasource'], axis=1, inplace=True)
         df_weekly_avg.rename(columns={'region': 'weekly_avg'}, inplace=True)
         df_weekly_avg.reset_index(inplace=True)
-
         df_weekly_avg['execution_datetime'] = etl_start_datetime
-        df_weekly_avg.to_sql('WEEK_AVERGAGE_BY_REGION', dbEngine, if_exists='append')
+        df_weekly_avg.to_sql('WEEK_AVERAGE_BY_REGION', dbEngine, if_exists='append')
 
         # Remove the all the characteres not related to the lat and lon for the origin and destine('POINT ()').
         df['origin_coord']=df['origin_coord'].apply(lambda st: st[st.find("(")+1:st.find(")")])
@@ -133,8 +132,9 @@ with pd.read_csv('trips.csv', header=0, chunksize=chunksize) as chunk:
         df_region = pd.read_sql_table('D_REGION', dbEngine)
         df_region = df_region.loc[df_region['execution_datetime'] == str(etl_start_datetime)]
 
-        df_coord = pd.read_sql_table('D_COORD', dbEngine)
-        df_coord = df_coord.loc[df_coord['execution_datetime'] == str(etl_start_datetime)]
+        # Here I use a raw sql query because I'm considering that this table is big.
+        # I don't want to get all rows, so I'm filtering directly on the query.
+        df_coord = pd.read_sql_query('SELECT * FROM D_COORD where execution_datetime = '+"'"+str(etl_start_datetime)+"'"+';', con=dbEngine)
 
         df_dates = pd.read_sql_table('D_DATES', dbEngine)
         df_dates = df_dates.loc[df_dates['execution_datetime'] == str(etl_start_datetime)]
@@ -143,12 +143,9 @@ with pd.read_csv('trips.csv', header=0, chunksize=chunksize) as chunk:
         df_datasources = pd.read_sql_table('D_DATASOURCE', dbEngine)
         df_datasources = df_datasources.loc[df_datasources['execution_datetime'] == str(etl_start_datetime)]
 
-        
-
         logging.info('Working at the fact table transformations...')
 
-        
-
+    
         # Merge the trips fact table with the coordinates dimension table.
         df = df.merge(df_coord.reset_index(), how='inner', left_on=['origin_coord_lat', 'origin_coord_lon', 'dst_coord_lat', 'dst_coord_lon'], right_on=['origin_coord_lat', 'origin_coord_lon', 'dst_coord_lat', 'dst_coord_lon'])
         # Set the dimension id column to the wanted name in the fact table.
@@ -183,3 +180,5 @@ with pd.read_csv('trips.csv', header=0, chunksize=chunksize) as chunk:
 
         etl_end_datetime = datetime.now()
         logging.info('Ending execution at: '+ str(etl_end_datetime))
+
+
