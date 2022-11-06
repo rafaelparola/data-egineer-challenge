@@ -57,7 +57,7 @@ with pd.read_csv('trips.csv', header=0, chunksize=chunksize) as chunk:
 
 
         # Group similar origin, destionation and datetime
-        df['count_grouped'] = 0
+        df['count_grouped'] = 1
 
         # Returns the distance in Kilometers from point 1 to point 2
         def check_distancies(lat, lon, lat2, lon2):
@@ -102,19 +102,27 @@ with pd.read_csv('trips.csv', header=0, chunksize=chunksize) as chunk:
         df_datasources.index.names = ['id']
         df_datasources.index += 1
 
-        # Merges Coordinates DataFrame with Regions Dataframe in order to stablish an relation between then in the database.
-        df_coord = df_coord.merge(df_region.reset_index(), how='inner', left_on='region', right_on='region')
-        # Renames the id column from the Regions DataFrame to d_region_id in order to be created in the database.
-        df_coord = df_coord.rename(columns={'id': 'd_region_id'})
-        # Drop column so it will not bring duplicate columns into the database.
-        df_coord = df_coord.drop(['region'], axis=1)
-        # Drop column so it will not bring duplicate columns into the fact table in the database.
-        df = df.drop(['region'], axis=1)
+
 
         # Persists all dimension tables into the database.
         df_region['execution_datetime'] = etl_start_datetime
         df_region.to_sql('D_REGION', dbEngine, if_exists='append', index=False)
         logging.info('D_REGION table loaded.')
+
+        # Gets all data from the D_REGION dimension table in order to merge with D_COORD
+        df_region =  pd.read_sql_table('D_REGION', dbEngine)
+        df_region = df_region.loc[df_region['execution_datetime'] == str(etl_start_datetime)]
+
+
+        # Merges Coordinates DataFrame with Regions Dataframe in order to stablish an relation between then in the database.
+        df_coord = df_coord.merge(df_region.reset_index(), how='inner', left_on='region', right_on='region')
+        # Renames the id column from the Regions DataFrame to d_region_id in order to be created in the database.
+        df_coord = df_coord.rename(columns={'id': 'd_region_id'})
+        # Drop column so it will not bring duplicate columns into the database.
+        df_coord = df_coord.drop(['region', 'index'], axis=1)
+        # Drop column so it will not bring duplicate columns into the fact table in the database.
+        df = df.drop(['region'], axis=1)
+
 
         df_coord['execution_datetime'] = etl_start_datetime
         df_coord.to_sql('D_COORD', dbEngine, if_exists='append', index=False)
@@ -129,8 +137,6 @@ with pd.read_csv('trips.csv', header=0, chunksize=chunksize) as chunk:
         logging.info('D_DATASOURCE table loaded.')
 
         # Gets all data from the db dimension tables
-        df_region = pd.read_sql_table('D_REGION', dbEngine)
-        df_region = df_region.loc[df_region['execution_datetime'] == str(etl_start_datetime)]
 
         # Here I use a raw sql query because I'm considering that this table is big.
         # I don't want to get all rows, so I'm filtering directly on the query.
