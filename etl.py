@@ -92,16 +92,6 @@ with pd.read_csv('trips.csv', header=0, chunksize=chunksize) as chunk:
         df_dates = df[['datetime']].drop_duplicates()
         df_datasources = df[['datasource']].drop_duplicates()
 
-        # Set index name as id and increseas all of it by 1, so it will be populated as an identificator in the database. 
-        df_region.index.names = ['id']
-        df_region.index += 1
-        df_coord.index.names = ['id']
-        df_coord.index += 1
-        df_dates.index.names = ['id']
-        df_dates.index += 1
-        df_datasources.index.names = ['id']
-        df_datasources.index += 1
-
 
 
         # Persists all dimension tables into the database.
